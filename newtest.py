@@ -112,12 +112,12 @@ class EdgeDevice:
                 loss = self.criterion(output, target)
                 loss.backward()
                 self.optimizer.step()
-            
+
 
         # Calculate computational time and energy consumption
         G = 7000 # Number of cpu cycles required to process one bit local data
         mu_MB = 1
-        mu_bits = mu_MB * 8 * 1024 * 1024
+        mu_bits = mu_MB * 8 * 1e6
         T_local = mu_bits * G / self.cpu_freq
         tau = 1e-28  # Time constant for energy consumption (in seconds)
         # Energy consumption (in Joules)
@@ -161,7 +161,7 @@ class MECServer:
             self.devices.append(device)
         self.energy_history = []
         self.bandwidth_history = []
-        
+
     # الفنكشن دا يشوفوه امنيه واسراء
     def distribute_data(self):
         data_per_device = len(trainset) // len(self.devices) 
@@ -172,7 +172,15 @@ class MECServer:
 
     def fed_avg(self, local_weights, data_sizes):
         total_size = sum(data_sizes)
+        with open("total_data_size.txt", "a") as f:
+            f.write(f"Total data size: {total_size}\n")
+        with open("local_weights.txt", "w") as f:
+            for weights in local_weights:
+                f.write(f"{weights}\n")
         avg_weights = {key: torch.zeros_like(local_weights[0][key]) for key in local_weights[0]}
+        with open("avg_weights.txt", "w") as f:
+            for key, value in avg_weights.items():
+                f.write(f"{key}: {value}\n")
         for weights, size in zip(local_weights, data_sizes):
             for key in weights:
                 avg_weights[key] += weights[key] * (size / total_size)
@@ -183,11 +191,14 @@ class MECServer:
         data_sizes = []
         total_energy = 0
         total_bandwidth = 0
+        delays = []
         
         for device_id in selected_devices:
             device = self.devices[device_id]
             weights, T_local, T_trans, energy_used = device.train_local_model(epochs)
             print(f"Device {device_id}: Local training completed. Energy used: {energy_used * 1e12:.10f} pJ, Bandwidth: {device.effective_bandwidth:.2f} Mbps")
+            delay = T_local + T_trans
+            delays.append(delay)
             local_weights.append(weights)
             data_sizes.append(len(device.local_data))
             total_energy += energy_used
@@ -199,13 +210,13 @@ class MECServer:
         self.energy_history.append(total_energy)
         self.bandwidth_history.append(total_bandwidth)
 
-        return T_local + T_trans
+        return max(delays) #  التاخير كبير شديد لازم نفتش ليه حل
 
     def evaluate_global_model(self):
         self.global_model.eval()
         correct = 0
         total = 0
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = torch.device("cpu")
         self.global_model.to(device)
         with torch.no_grad():
             for data, target in testloader:
@@ -214,6 +225,12 @@ class MECServer:
                 _, predicted = torch.max(outputs.data, 1)
                 total += target.size(0)
                 correct += (predicted == target).sum().item()
+                # حساب طول data (عدد العينات) و الحجم بالبايت
+                data_length = len(data)
+                data_size_bytes = data.element_size() * data.nelement()
+                with open("data_size.txt", "a") as f:
+                    f.write(f"Data length: {data_length}\n")
+                    f.write(f"Data size (in bytes): {data_size_bytes}\n")
         accuracy = correct / total
         return accuracy
 
@@ -312,7 +329,7 @@ if __name__ == "__main__":
         total_bandwidth = mec_server.bandwidth_history[-1]
         print(f"📊 Round {round_num+1}: Total energy used = {total_energy * 1e12:.10f} pJ, Total bandwidth used = {total_bandwidth:.4f} Mbps")
 
-        reward = accuracy - delay / 1000
+        reward = accuracy - delay / 1000 # معادله 13 في الورقه
         state = np.array([list(d.report_resources().values()) for d in mec_server.devices]).flatten().reshape(1, -1)
         next_state = state
         ddqn.remember(state, selected_devices[0], reward, next_state, False)
