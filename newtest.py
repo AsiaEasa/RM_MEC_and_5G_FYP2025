@@ -55,7 +55,10 @@ class FiveGNetwork:
             # Dynamic bandwidth allocation (decreases slightly as more devices connect)
             effective_bandwidth = self.base_bandwidth * (1 - 0.05 * self.connected_devices) # نحدد  انو دا هو النطاق الترديي للجهاز بعد الاتصال بالشبكه ( دا النطاق الوفرتو شبكه الجيل الخامس)
             # نشوف ورقه تثبنت القانون دا 
-            return effective_bandwidth, self.latency
+            #  نشوف فنكشن او مكتبه تحاكي لينا توزيع النطاق بطريقه حقيقيه
+            # بوصل كل الاجهزه بعدها بختار الاجهزه المشاركه وبعدها بفصل كل الاجهزه المامشاركه في التدريب وبعد يخلص التدريب 
+            # واجي اختار للراوند التاني ارجع كل الاجهزه متصله بالشبكه وبعدها اختار الاجهزه المشاركه للراوند دا
+            return effective_bandwidth, self.latency # النطاق الترددي مستخدماه في المشروع عشان عمليه الداونلوود للقلوبال موديل وعمليه الابلوود للاوزان حقت الاجهزه
         else:
             print("5G Network: Capacity exceeded, using fallback bandwidth.")
             return 10, 0.01  # Fallback to lower bandwidth and higher latency
@@ -93,7 +96,7 @@ class EdgeDevice:
         device = torch.device("cpu")
 
         # Move the model to the CPU
-        self.model.to(device)
+        self.model.to(device) # مفروض دي عمليه داونلوود نستخدم فيها ال  BW شبكه الجيل الخامس
         self.model.train()
  
         # The batch_size=85 refers to the number of data samples processed in one forward/backward pass during training.
@@ -136,8 +139,8 @@ class EdgeDevice:
         # Transmission time using 5G network
         D = 20e6  # Model size in bits the size of the global model (20 MB)
         T_trans = D / self.effective_bandwidth  # Include latency from 5G
-        
-        return self.model.state_dict(), T_local, T_trans, B_k
+
+        return self.model.state_dict(), T_local, T_trans, B_k # مفروض دي عمليه ابلوود نستخدم فيها ال  BW شبكه الجيل الخامس
 
     def report_resources(self):
         return {'cpu_freq': self.cpu_freq, 'energy': self.energy, 'bandwidth': self.effective_bandwidth}
@@ -146,7 +149,9 @@ class EdgeDevice:
         self.fiveg_network.disconnect_device()
 
 # MEC Server Class
-class MECServer:
+class MECServer: # This class represents the MEC server that coordinates the training process
+    # It manages the edge devices, global model, and training rounds.
+    # It also handles the data distribution and aggregation of local models.
     def __init__(self, num_devices=4):
         self.fiveg_network = FiveGNetwork()
         self.global_model = CNN()
@@ -156,6 +161,9 @@ class MECServer:
             energy = 5000 + (cpu_freq * 1000)   # Initial energy formula مفروض نكتبو في البحث انو فرضنا قانون وممكن نخليها راندوم لو ماعرفنا نثبتها
             # نشوف ورقه تثبنت القانون دا 
             bandwidth = np.random.uniform(0, 2) # نكتب ان دي النطاق الترددي للجهاز قبل الاتصال بالشبكه
+            # النطاق الترددي دا حق الجهاز لما نشتريه بكون بي النطاق دا لكن لمن يتصل بالشبكه الجيل الخامس بيكون النطاق الترددي مختلف
+            # بعدين نكتب انو النطاق الترددي للجهاز بعد الاتصال بالشبكه هو النطاق الفعلي للجهاز
+            # لو الجهاز فارضين 
             device = EdgeDevice(i, cpu_freq=cpu_freq, energy=energy,
                                 bandwidth=bandwidth, fiveg_network=self.fiveg_network)
             self.devices.append(device)
@@ -166,7 +174,7 @@ class MECServer:
     def distribute_data(self):
         data_per_device = len(trainset) // len(self.devices) 
         print(f"Distributing {data_per_device} samples per device")
-        for i, device in enumerate(self.devices):
+        for i, device in enumerate(self.devices): # نوزع الداتا على كل الاجهزه
             subset = torch.utils.data.Subset(trainset, range(i * data_per_device, (i + 1) * data_per_device))
             device.set_local_data(subset)
 
@@ -186,7 +194,7 @@ class MECServer:
                 avg_weights[key] += weights[key] * (size / total_size)
         return avg_weights
 
-    def simulate_training_round(self, selected_devices, epochs=1):
+    def simulate_training_round(self, selected_devices, epochs=3):
         local_weights = []
         data_sizes = []
         total_energy = 0
@@ -205,7 +213,7 @@ class MECServer:
             total_bandwidth += device.effective_bandwidth
         
         new_weights = self.fed_avg(local_weights, data_sizes)
-        self.global_model.load_state_dict(new_weights)
+        self.global_model.load_state_dict(new_weights) # update the global model with the average weights
 
         self.energy_history.append(total_energy)
         self.bandwidth_history.append(total_bandwidth)
@@ -271,7 +279,7 @@ class DDQN:
             return random.randrange(self.action_size)
         state = torch.FloatTensor(state)
         with torch.no_grad():
-            act_values = self.model(state)
+            act_values = self.model(state) # [.1 , .2 , .3 , .4]
         return np.argmax(act_values.numpy())
 
     def replay(self, batch_size):
@@ -318,11 +326,11 @@ if __name__ == "__main__":
         print(f"Device {dev.id}: CPU={dev.cpu_freq:.4f}, Energy={dev.energy:.6f}, Base BW={dev.base_bandwidth:.4f}, Effective BW={dev.effective_bandwidth:.4f}")
     mec_server.distribute_data() # Distribute data to devices
     ddqn = DDQN(state_size=12, action_size=4) # 4 devices, 3 features (cpu_freq, energy, bandwidth)
-    
+
     num_rounds = 5
     for round_num in range(num_rounds):
         selected_devices = select_devices_ddqn(mec_server, ddqn, num_devices_to_select=2)
-        delay = mec_server.simulate_training_round(selected_devices, epochs=1) # 1 epoch for local training 
+        delay = mec_server.simulate_training_round(selected_devices, epochs=3) # 1 epoch for local training 
         accuracy = mec_server.evaluate_global_model()
         print(f"Round {round_num+1}: Accuracy = {accuracy:.4f}, Delay = {delay:.4f}")
         total_energy = mec_server.energy_history[-1]
