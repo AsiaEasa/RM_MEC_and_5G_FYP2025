@@ -7,6 +7,17 @@ from collections import deque
 import matplotlib.pyplot as plt
 import torchvision
 import torchvision.transforms as transforms
+import logging
+
+# إعداد logging لتسجيل الرسائل في ملف
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(message)s',
+    handlers=[
+        logging.FileHandler('simulation_log.txt', mode='w')  # ملف لتسجيل الرسائل
+    ]
+)
+
 
 # Set random seeds for reproducibility
 SEED = 42
@@ -121,7 +132,7 @@ class FiveGNetwork:
     def connect_device(self, device_id):
         """Connect a device to the 5G network with mMTC service."""
         if len(self.connected_devices) >= self.capacity:
-            print(f"5G Network: Capacity exceeded for device {device_id}, using fallback.")
+            logging.info(f"5G Network: Capacity exceeded for device {device_id}, using fallback.")
             return 10, 0.01, self.packet_loss_rate
 
         self.connected_devices[device_id] = True
@@ -148,8 +159,8 @@ class FiveGNetwork:
         self.latency_history.append(latency)
         self.packet_loss_history.append(packet_loss)
         
-        print(f"Device {device_id} connected: Bandwidth={effective_bandwidth:.2f} Mbps, "
-              f"Latency={latency*1000:.2f} ms, Packet Loss={packet_loss:.4f}, Service=mMTC")
+        logging.info(f"Device {device_id} connected: Bandwidth={effective_bandwidth:.2f} Mbps, "
+                     f"Latency={latency*1000:.2f} ms, Packet Loss={packet_loss:.4f}, Service=mMTC")
         
         return effective_bandwidth, latency, packet_loss
 
@@ -157,7 +168,7 @@ class FiveGNetwork:
         """Disconnect a device from the network."""
         if device_id in self.connected_devices:
             del self.connected_devices[device_id]
-            print(f"Device {device_id} disconnected.")
+            logging.info(f"Device {device_id} disconnected.")
 
     def reallocate_resources(self):
         """Reallocate bandwidth dynamically based on connected devices."""
@@ -167,13 +178,13 @@ class FiveGNetwork:
         
         # إعادة تخصيص النطاق الترددي بناءً على عدد الأجهزة
         self.network_slice["bandwidth"] = self.base_bandwidth / max(1, num_devices * 0.1)
-        print(f"Resources reallocated: mMTC Bandwidth={self.network_slice['bandwidth']:.2f} Mbps")
-
+        logging.info(f"Resources reallocated: mMTC Bandwidth={self.network_slice['bandwidth']:.2f} Mbps")
+        
     def simulate_channel_conditions(self):
         """Simulate dynamic channel conditions (e.g., fading, interference)."""
         self.fading_factor = np.random.uniform(0.9, 1.0) if self.spectrum == "sub6" else np.random.uniform(0.85, 0.95)
         self.interference_factor = np.random.uniform(0.02, 0.05)
-        print(f"Channel updated: Fading={self.fading_factor:.2f}, Interference={self.interference_factor:.2f}")
+        logging.info(f"Channel updated: Fading={self.fading_factor:.2f}, Interference={self.interference_factor:.2f}")
 
     def get_network_status(self):
         """Return current network status and performance metrics."""
@@ -203,16 +214,16 @@ class EdgeDevice:
     def set_local_data(self, data):
         if self.local_data is None:
             self.local_data = data
-            print(f"Device {self.id}: Assigned {len(data) if data else 0} samples")
+            logging.info(f"Device {self.id}: Assigned {len(data) if data else 0} samples")
         else:
-            print(f"Device {self.id}: Data already assigned, skipping")
-
+            logging.info(f"Device {self.id}: Data already assigned, skipping")
+            
     def charge_energy(self, w=1):
         return np.random.poisson(w) * ENERGY_SCALE
 
     def train_local_model(self, epochs, energy_rate=1):
         if self.local_data is None:
-            print(f"Device {self.id}: No data assigned, skipping training.")
+            logging.info(f"Device {self.id}: No data assigned, skipping training.")
             return self.model.state_dict(), 0, 0, 0
 
         device = torch.device("cpu")
@@ -238,9 +249,9 @@ class EdgeDevice:
         B_k = (self.cpu_freq ** 2) * TAU * MU_BITS * G * ENERGY_SCALE
         # Poisson distribution for energy charging
         C_k = self.charge_energy(energy_rate)
-        print(f"Device {self.id}: Charging with {C_k} energy units.")
+        logging.info(f"Device {self.id}: Charging with {C_k} energy units.")
         if self.energy < B_k:
-            print(f"Device {self.id}: Insufficient energy ({self.energy:.2f} < {B_k:.2f}), skipping training.")
+            logging.info(f"Device {self.id}: Insufficient energy ({self.energy:.2f} < {B_k:.2f}), skipping training.")
             return self.model.state_dict(), 0, 0, 0
         # Equation 11 from the paper
         self.energy = max(self.energy - B_k + C_k, 0)
@@ -269,13 +280,13 @@ class MECServer:
         self.energy_history = []
         self.bandwidth_history = []
         self.data_distributed = False
-        print(f"Created {len(self.devices)} unique devices")
+        logging.info(f"Created {len(self.devices)} unique devices")
 
     def distribute_data(self, trainset):
         if self.data_distributed:
-            print("Data already distributed, skipping")
+            logging.info("Data already distributed, skipping")
             return
-        print(f"Starting data distribution for {len(trainset)} samples")
+        logging.info(f"Starting data distribution for {len(trainset)} samples")
         data_size = len(trainset)
         data_per_device = data_size // len(self.devices)
         #يُستخدم لتوزيع العينات الزائدة بشكل عادل على الأجهزة الأولى
@@ -291,7 +302,7 @@ class MECServer:
             subset = torch.utils.data.Subset(trainset, device_indices)
             device.set_local_data(subset)
             start_idx = end_idx
-        print(f"Distributed {data_size} samples across {len(self.devices)} devices")
+        logging.info(f"Distributed {data_size} samples across {len(self.devices)} devices")
         self.data_distributed = True
 
     def fed_avg(self, local_weights):
@@ -308,7 +319,7 @@ class MECServer:
         total_energy = 0
         total_bandwidth = 0
         delays = []
-        print(f"Selected devices: {selected_devices}")
+        logging.info(f"Selected devices: {selected_devices}")
         self.fiveg_network.simulate_channel_conditions()
         self.fiveg_network.reallocate_resources()
 
@@ -316,7 +327,7 @@ class MECServer:
             device = self.devices[device_id]
             total_bandwidth += device.effective_bandwidth  # Always record bandwidth
             weights, T_local, T_trans, energy_used = device.train_local_model(epochs)
-            print(f"Device {device_id}: Energy used: {energy_used} pJ, Bandwidth: {device.effective_bandwidth:.2f} Mbps")
+            logging.info(f"Device {device_id}: Energy used: {energy_used} pJ, Bandwidth: {device.effective_bandwidth:.2f} Mbps")
             delay = T_local + T_trans
             delays.append(delay)
             if energy_used > 0:
@@ -389,7 +400,7 @@ class DeviceSelectionEnv:
                   - ALPHA_L * (max_latency / L_MAX))
 
         state = self.generate_state()
-        print(f"Round: Reward={reward:.2f}, Energy={total_energy_consumed}, Bandwidth={total_bandwidth:.2f}")
+        logging.info(f"Round: Reward={reward:.2f}, Energy={total_energy_consumed}, Bandwidth={total_bandwidth:.2f}")
         return state, reward
 
     def reset(self):
@@ -506,7 +517,7 @@ if __name__ == "__main__":
     episode_bandwidth_history = []
 
     for episode in range(NUM_EPISODES):
-        print(f"\nStarting Episode {episode+1}")
+        logging.info(f"\nStarting Episode {episode+1}")
         state = env.reset()
         total_reward = 0
         iteration = 0
@@ -532,7 +543,7 @@ if __name__ == "__main__":
             avg_reward = total_reward / iteration if iteration > 0 else reward
 
             accuracy = mec_server.evaluate_global_model(testloader)
-            print(f"Iteration {iteration}, Total Reward: {total_reward:.2f}, Avg Reward: {avg_reward:.2f}, Accuracy: {accuracy:.4f}")
+            logging.info(f"Iteration {iteration}, Total Reward: {total_reward:.2f}, Avg Reward: {avg_reward:.2f}, Accuracy: {accuracy:.4f}")
 
         agent.update_epsilon()
         if episode % TARGET_UPDATE == 0:
@@ -542,7 +553,9 @@ if __name__ == "__main__":
         rewards_per_episode.append(total_reward)
         episode_energy_history.append(episode_energy / episode_iterations if episode_iterations > 0 else 0)
         episode_bandwidth_history.append(episode_bandwidth / episode_iterations if episode_iterations > 0 else 0)
-        print(f"Episode {episode+1} Finished, Total Reward: {total_reward:.2f}, Avg Reward: {avg_reward:.2f}, Iterations: {iteration}, Accuracy: {accuracy:.2f}, Energy: {episode_energy_history[-1]:.2f}, Bandwidth: {episode_bandwidth_history[-1]:.2f}")
+        logging.info(f"Episode {episode+1} Finished, Total Reward: {total_reward:.2f}, Avg Reward: {avg_reward:.2f}, "
+                     f"Iterations: {iteration}, Accuracy: {accuracy:.2f}, Energy: {episode_energy_history[-1]:.2f}, "
+                     f"Bandwidth: {episode_bandwidth_history[-1]:.2f}")
 
     plt.figure(figsize=(12, 5))
     plt.subplot(1, 3, 1)
