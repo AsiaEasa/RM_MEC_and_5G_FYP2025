@@ -11,6 +11,7 @@ import torchvision.transforms as transforms
 import logging
 from sklearn.metrics import confusion_matrix
 import seaborn as sns
+from collections import Counter
 
 # Setup logging
 logging.basicConfig(
@@ -235,6 +236,24 @@ class EdgeDevice:
         self.model.train()
 
         batch_size = 1276
+        
+        # 📊 البيانات التي سيتدرب عليها الجهاز في هذه الجولة
+        if isinstance(self.local_data, torch.utils.data.Subset):
+            parent_dataset = self.local_data.dataset
+            indices_now = self.local_data.indices
+        else:
+            parent_dataset = self.local_data
+            indices_now = list(range(len(self.local_data)))
+
+        labels_now = [parent_dataset[idx][1] for idx in indices_now]
+        label_counts_now = dict(Counter(labels_now))
+
+        logging.info(f"📊 Device {self.id} - Round {self.call_counter}")
+        logging.info(f"   Total samples: {len(labels_now)}")
+        for cls, count in sorted(label_counts_now.items()):
+            logging.info(f"   Class {cls}: {count} samples")
+            
+    
         loader = torch.utils.data.DataLoader(self.local_data, batch_size=batch_size, shuffle=True, drop_last=False)
 
         for data, target in loader:
@@ -333,10 +352,17 @@ class MECServer:
             if device_indices:
                 subset = torch.utils.data.Subset(trainset, device_indices)
                 device.set_local_data(subset)
-                # طباعة تفاصيل التوزيع
-                print(f"Distributed data to device {device_id}: indices {device_indices} (total: {len(device_indices)} samples)")
+                labels_for_device = [trainset[idx][1] for idx in device_indices]
+                label_counts = dict(Counter(labels_for_device))
+
+                logging.info(f"📦 Device {device_id} received {len(labels_for_device)} samples")
+                for cls, count in sorted(label_counts.items()):
+                    logging.info(f"   - Class {cls}: {count} samples")
+
+                # طباعة تفصيلية للـ indices (لو عايزة تتبعي بالضبط البيانات)
+                logging.debug(f"   Indices: {device_indices}")
             else:
-                logging.warning(f"No data distributed to device {device_id}")
+                logging.warning(f"⚠️ No data distributed to device {device_id}")
 
         logging.info(f"Distributed {len(self.distributed_indices)} samples so far")
 
