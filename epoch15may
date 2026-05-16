@@ -490,7 +490,7 @@ class DDQNAgent:
         n = len(state)
         action = [0] * n
         if random.random() < self.epsilon:
-            num_selected = 1
+            num_selected = 2
             selected_indices = random.sample(range(n), num_selected)
             for idx in selected_indices:
                 action[idx] = 1
@@ -500,7 +500,7 @@ class DDQNAgent:
                 scores = self.policy_net(state_tensor).squeeze()
                 with open("scores_output_fixed_5g_lat15dec.txt", "a") as f:
                     f.write(f"scores: {scores.tolist()}\n")
-                num_selected = 1
+                num_selected = 2
                 selected_indices = torch.argsort(scores, descending=True)[:num_selected].tolist()
                 for idx in selected_indices:
                     action[idx] = 1
@@ -622,7 +622,10 @@ if __name__ == "__main__":
     temp_energy = []
     temp_latency = []
     temp_band = []
-   
+    MAX_EPOCHS = 100          # حد أقصى لعدد الإيبوك (للأمان)
+    min_epochs_required = 5   # يجب أن يحقق الدقة المطلوبة لعدة إيبوك متتالية
+
+    consecutive_success = 0   # عداد للإيبوك الناجحة
     iteration = 0
 
     # Create CSV file and write header
@@ -638,13 +641,13 @@ if __name__ == "__main__":
         avg_reward = float('inf')
         accuracy = 0.0
         max_accuracy = 0.0
-        #episode_energy = 0
-        #episode_bandwidth = 0
-        #episode_iterations = 0
+        episode_energy = 0
+        episode_bandwidth = 0
+        episode_iterations = 0
         #episode_latency_list = []
        
         
-        while accuracy <= DESIRED_ACCURACY:
+        while True:
             action = agent.select_action(state)
             next_state, reward, max_latency, epoch_completed = env.step(action, episode)
 
@@ -652,7 +655,7 @@ if __name__ == "__main__":
             agent.optimize_model()
             state = next_state
             total_reward += reward
-            #iteration += 1
+            iteration += 1
             episode_iterations += 1
             episode_energy += mec_server.energy_history[-1] if mec_server.energy_history else 0
             episode_bandwidth += mec_server.bandwidth_history[-1] if mec_server.bandwidth_history else 0
@@ -709,6 +712,8 @@ if __name__ == "__main__":
             if epoch_completed:
                 print(f"\n========== Epoch {mec_server.current_epoch} Completed ==========")
                 logging.info(f"========== Epoch {mec_server.current_epoch} Completed ==========")
+                current_epoch_acc = np.min(temp_acc) if temp_acc else 0.0
+                print(f"\n========== Epoch {mec_server.current_epoch} Completed - Min Acc = {current_epoch_acc:.4f} ==========")
                 epoch_accuracies.append(np.min(temp_acc))
                 epoch_precisions.append(np.min(temp_prec))
                 epoch_recalls.append(np.min(temp_rec))
@@ -719,8 +724,21 @@ if __name__ == "__main__":
                 epoch_bandwidth.append(np.min(temp_band))
 
                 logging.info(f"Epoch {mec_server.current_epoch} metrics saved.")
+# ====================== شرط الإيقاف الجديد ======================
+                if current_epoch_acc >= DESIRED_ACCURACY:
+                    consecutive_success += 1
+                    logging.info(f"✅ Epoch {mec_server.current_epoch} succeeded ({consecutive_success}/{min_epochs_required})")
+                else:
+                    consecutive_success = 0
 
-                # reset temp lists
+                # إيقاف إذا:
+                # 1. حقق الدقة المطلوبة لعدة إيبوك متتالية، أو
+                # 2. وصل للحد الأقصى من الإيبوك
+                if consecutive_success >= min_epochs_required or mec_server.current_epoch >= MAX_EPOCHS:
+                    logging.info(f"🏁 Training stopped: {mec_server.current_epoch} epochs completed.")
+                    break
+
+                # تفريغ القوائم
                 temp_acc.clear()
                 temp_prec.clear()
                 temp_rec.clear()
@@ -728,8 +746,14 @@ if __name__ == "__main__":
                 temp_auc.clear()
                 temp_energy.clear()
                 temp_latency.clear()
-                temp_band.clear()            
+                temp_band.clear()
 
+            # شرط أمان إضافي
+            if mec_server.current_epoch >= MAX_EPOCHS:
+                break
+
+
+                 
                             
 
         agent.update_epsilon()
@@ -790,14 +814,6 @@ if __name__ == "__main__":
     plt.savefig('Accuracy per epoch1_fixed_5g_lat.png')
     plt.close()
 
-    plt.figure(figsize=(10, 6))
-    plt.plot(epoch_accuracies[:160], label="Accuracy per epoch (first 160)")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy")
-    plt.title("Model accuracy during first 160 epochs")
-    plt.legend()
-    plt.savefig('Accuracy per for 160 iteration1_fixed_5g_lat.png')
-    plt.close()
     # Global style for clean professional plots
     plt.rcParams.update({
         'font.size': 12,
